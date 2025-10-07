@@ -86,6 +86,40 @@ function periodKey(period: Period, d = new Date()) {
   }
 }
 
+function startOfDay(d = new Date()) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function formatTimeLabel(d: Date) {
+  // Prefer “12 AM / 1 PM”-style (drop :00 if present)
+  let s = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
+  s = s.replace(":00 ", " "); // “12:00 AM” -> “12 AM”
+  return s;
+}
+
+function nextDailyResetLabel(now = new Date()) {
+  const tomorrow = startOfDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+  return `Resets at ${formatTimeLabel(tomorrow)}`;
+}
+
+function nextWeeklyResetLabel(now = new Date()) {
+  // ISO weeks start Monday; reset at next Monday 12:00 AM (local)
+  const isoDay = now.getDay() === 0 ? 7 : now.getDay(); // 1..7
+  const daysToAdd = (8 - isoDay) % 7 || 7; // if today is Monday, go to next Monday
+  const nextMon = startOfDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysToAdd));
+  const wk = new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(nextMon); // e.g., "Mon"
+  return `Resets ${wk} ${formatTimeLabel(nextMon)}`;
+}
+
+function nextMonthlyResetLabel(now = new Date()) {
+  const firstNextMonth = startOfDay(new Date(now.getFullYear(), now.getMonth() + 1, 1));
+  const mon = new Intl.DateTimeFormat(undefined, { month: "short" }).format(firstNextMonth); // e.g., "Nov"
+  const day = firstNextMonth.getDate();
+  return `Resets ${mon} ${day}, ${formatTimeLabel(firstNextMonth)}`;
+}
+
 // ---------- Storage ----------
 const LS_KEY = "mhc:v3"; // version with section-level streaks + targets
 const LS_STREAKS_KEY = "mhc:section-streaks:v1";
@@ -190,16 +224,29 @@ function Section({
   children,
   streakDisplay,
   best,
+  resetLabel,
 }: {
   title: string;
   children: React.ReactNode;
   streakDisplay?: number;
   best?: number;
+  resetLabel?: string;
 }) {
   return (
     <section className="mb-8">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-lg font-medium tracking-tight text-gray-900 dark:text-gray-100">{title}</h2>
+      {/* Header row */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3 gap-1 sm:gap-2">
+        {/* Left: title + reset label */}
+        <div className="flex items-center justify-between w-full sm:w-auto">
+          <h2 className="text-lg font-medium tracking-tight text-gray-900 dark:text-gray-100">{title}</h2>
+          {resetLabel && (
+            <span className="ml-3 text-xs text-gray-600 dark:text-gray-300 opacity-80">
+              {resetLabel}
+            </span>
+          )}
+        </div>
+
+        {/* Right: streak info */}
         {typeof streakDisplay === "number" && (
           <div className="text-xs text-gray-600 dark:text-gray-300">
             Streak: <span className="tabular-nums font-semibold">{streakDisplay}</span>
@@ -207,7 +254,11 @@ function Section({
           </div>
         )}
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{children}</div>
+
+      {/* Grid of items */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {children}
+      </div>
     </section>
   );
 }
@@ -631,10 +682,6 @@ export default function MinimalHabitCountersApp() {
           </button>
           <PrimaryButton label={"+1"} onClick={() => increment(it.id)} />
         </div>
-
-        <div className="mt-3 flex items-center justify-between text-[11px] text-gray-500">
-          <span className="opacity-70">Reset: {it.periodKey}</span>
-        </div>
       </Card>
     );
   }
@@ -861,19 +908,30 @@ export default function MinimalHabitCountersApp() {
           </div>
         )}
 
-        {/* Live headers show previewed streak = stored + (allDone ? 1 : 0) */}
+        {/* Live headers show previewed streak + reset time */}
         {(() => {
+          const now = new Date();
           const hasDaily = items.some((i) => i.period === "daily");
           const hasWeekly = items.some((i) => i.period === "weekly");
           const hasMonthly = items.some((i) => i.period === "monthly");
+
           const dailyDone = hasDaily && items.filter((i) => i.period === "daily").every((i) => i.count >= Math.max(1, i.target));
           const weeklyDone = hasWeekly && items.filter((i) => i.period === "weekly").every((i) => i.count >= Math.max(1, i.target));
           const monthlyDone = hasMonthly && items.filter((i) => i.period === "monthly").every((i) => i.count >= Math.max(1, i.target));
 
+          const dailyReset = nextDailyResetLabel(now);
+          const weeklyReset = nextWeeklyResetLabel(now);
+          const monthlyReset = nextMonthlyResetLabel(now);
+
           return (
             <>
               {hasDaily && (
-                <Section title="Daily" streakDisplay={sectionStreaks.daily + (dailyDone ? 1 : 0)} best={sectionStreaks.bestDaily}>
+                <Section
+                  title="Daily"
+                  streakDisplay={sectionStreaks.daily + (dailyDone ? 1 : 0)}
+                  best={sectionStreaks.bestDaily}
+                  resetLabel={dailyReset}
+                >
                   {byPeriod.daily.map((it) => (
                     <ItemCard key={it.id} it={it} />
                   ))}
@@ -881,7 +939,12 @@ export default function MinimalHabitCountersApp() {
               )}
 
               {hasWeekly && (
-                <Section title="Weekly" streakDisplay={sectionStreaks.weekly + (weeklyDone ? 1 : 0)} best={sectionStreaks.bestWeekly}>
+                <Section
+                  title="Weekly"
+                  streakDisplay={sectionStreaks.weekly + (weeklyDone ? 1 : 0)}
+                  best={sectionStreaks.bestWeekly}
+                  resetLabel={weeklyReset}
+                >
                   {byPeriod.weekly.map((it) => (
                     <ItemCard key={it.id} it={it} />
                   ))}
@@ -889,7 +952,12 @@ export default function MinimalHabitCountersApp() {
               )}
 
               {hasMonthly && (
-                <Section title="Monthly" streakDisplay={sectionStreaks.monthly + (monthlyDone ? 1 : 0)} best={sectionStreaks.bestMonthly}>
+                <Section
+                  title="Monthly"
+                  streakDisplay={sectionStreaks.monthly + (monthlyDone ? 1 : 0)}
+                  best={sectionStreaks.bestMonthly}
+                  resetLabel={monthlyReset}
+                >
                   {byPeriod.monthly.map((it) => (
                     <ItemCard key={it.id} it={it} />
                   ))}
