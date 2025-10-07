@@ -440,22 +440,57 @@ export default function MinimalHabitCountersApp() {
 
   // UI helpers
   function TitleBar() {
+    const [showAddMenu, setShowAddMenu] = useState(false);
+    const addMenuRef = useRef<HTMLDivElement>(null);
+
+    // Close on outside click (pointer) and on Escape — same as the "⋯" menu
+    useEffect(() => {
+      if (!showAddMenu) return;
+      const onPointerDown = (e: PointerEvent) => {
+        if (!addMenuRef.current) return;
+        if (!addMenuRef.current.contains(e.target as Node)) {
+          setShowAddMenu(false);
+        }
+      };
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key === "Escape") setShowAddMenu(false);
+      };
+      document.addEventListener("pointerdown", onPointerDown);
+      document.addEventListener("keydown", onKey);
+      return () => {
+        document.removeEventListener("pointerdown", onPointerDown);
+        document.removeEventListener("keydown", onKey);
+      };
+    }, [showAddMenu]);
+
     return (
       <div className="sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/60 dark:supports-[backdrop-filter]:bg-gray-950/60 bg-white/80 dark:bg-gray-950/80 border-b border-gray-200/70 dark:border-gray-800">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="text-sm tracking-wide uppercase text-gray-500">Minimal Counters</div>
-          <div className="relative">
+
+          {/* Wrap trigger + menu so outside clicks are detectable */}
+          <div className="relative" ref={addMenuRef}>
             <button
+              type="button"
               onClick={() => setShowAddMenu((s) => !s)}
               className="rounded-xl border border-gray-200/70 dark:border-gray-700/70 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
+              aria-haspopup="menu"
+              aria-expanded={showAddMenu}
+              aria-label="Add counter"
             >
               Add
             </button>
+
             {showAddMenu && (
-              <div className="absolute right-0 mt-2 w-44 rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-white dark:bg-gray-900 shadow-lg overflow-hidden">
+              <div
+                role="menu"
+                className="absolute right-0 mt-2 w-48 rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-white dark:bg-gray-900 shadow-lg overflow-hidden z-10"
+              >
                 {PERIODS.map((p) => (
                   <button
                     key={p}
+                    role="menuitem"
+                    type="button"
                     onClick={() => {
                       setShowAddMenu(false);
                       setDraft({ title: "", period: p, count: 0, target: 1 });
