@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 
 /**
  * Minimalist Daily / Weekly / Monthly counters + Section Streaks
@@ -51,14 +51,24 @@ function getISODate(d = new Date()) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-// ISO week number (Monday = first day of week)
+// ISO week number (Mon=1..Sun=7) using LOCAL time so it aligns with daily/monthly
 function getISOWeek(d = new Date()) {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const dayNum = date.getUTCDay() || 7; // 1..7 (Mon..Sun)
-  date.setUTCDate(date.getUTCDate() + 4 - dayNum); // Thursday of this week
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-  return `${date.getUTCFullYear()}-W${weekNo}`;
+  const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  // getDay(): Sun=0..Sat=6 → map to ISO Mon=1..Sun=7
+  let day = date.getDay();
+  if (day === 0) day = 7;
+
+  // Move to Thursday in current week
+  date.setDate(date.getDate() + (4 - day));
+
+  // First day of the year
+  const yearStart = new Date(date.getFullYear(), 0, 1);
+
+  // Calculate week number
+  const days = Math.floor((date.getTime() - yearStart.getTime()) / 86400000) + 1;
+  const weekNo = Math.ceil(days / 7);
+
+  return `${date.getFullYear()}-W${weekNo}`;
 }
 
 function getMonthKey(d = new Date()) {
@@ -80,9 +90,22 @@ function periodKey(period: Period, d = new Date()) {
 const LS_KEY = "mhc:v3"; // version with section-level streaks + targets
 const LS_STREAKS_KEY = "mhc:section-streaks:v1";
 
+function safeGet(k: string) {
+  try {
+    return typeof localStorage !== "undefined" ? localStorage.getItem(k) : null;
+  } catch {
+    return null;
+  }
+}
+function safeSet(k: string, v: string) {
+  try {
+    if (typeof localStorage !== "undefined") localStorage.setItem(k, v);
+  } catch { }
+}
+
 function loadItems(): Item[] {
   try {
-    const raw = localStorage.getItem(LS_KEY);
+    const raw = safeGet(LS_KEY);
     if (raw) {
       const arr = JSON.parse(raw) as Item[];
       return arr.map((it) => ({
@@ -95,7 +118,7 @@ function loadItems(): Item[] {
       }));
     }
     // migrate v2 -> v3
-    const rawV2 = localStorage.getItem("mhc:v2");
+    const rawV2 = safeGet("mhc:v2");
     if (rawV2) {
       const arr = JSON.parse(rawV2) as any[];
       return arr.map((it) => ({
@@ -109,7 +132,7 @@ function loadItems(): Item[] {
         bestStreak: it.bestStreak ?? 0,
       }));
     }
-    const rawV1 = localStorage.getItem("mhc:v1");
+    const rawV1 = safeGet("mhc:v1");
     if (!rawV1) return [];
     const arrV1 = JSON.parse(rawV1) as any[];
     return arrV1.map((it) => ({
@@ -128,13 +151,21 @@ function loadItems(): Item[] {
 }
 
 function saveItems(items: Item[]) {
-  localStorage.setItem(LS_KEY, JSON.stringify(items));
+  safeSet(LS_KEY, JSON.stringify(items));
 }
 
 function loadSectionStreaks(): SectionStreaks {
   try {
-    const raw = localStorage.getItem(LS_STREAKS_KEY);
-    if (!raw) return { daily: 0, weekly: 0, monthly: 0, bestDaily: 0, bestWeekly: 0, bestMonthly: 0 };
+    const raw = safeGet(LS_STREAKS_KEY);
+    if (!raw)
+      return {
+        daily: 0,
+        weekly: 0,
+        monthly: 0,
+        bestDaily: 0,
+        bestWeekly: 0,
+        bestMonthly: 0,
+      };
     const s = JSON.parse(raw);
     return {
       daily: s.daily ?? 0,
@@ -150,11 +181,21 @@ function loadSectionStreaks(): SectionStreaks {
 }
 
 function saveSectionStreaks(ss: SectionStreaks) {
-  localStorage.setItem(LS_STREAKS_KEY, JSON.stringify(ss));
+  safeSet(LS_STREAKS_KEY, JSON.stringify(ss));
 }
 
 // ---------- UI Primitives ----------
-function Section({ title, children, streakDisplay, best }: { title: string; children: React.ReactNode; streakDisplay?: number; best?: number }) {
+function Section({
+  title,
+  children,
+  streakDisplay,
+  best,
+}: {
+  title: string;
+  children: React.ReactNode;
+  streakDisplay?: number;
+  best?: number;
+}) {
   return (
     <section className="mb-8">
       <div className="flex items-center justify-between mb-3">
@@ -172,12 +213,28 @@ function Section({ title, children, streakDisplay, best }: { title: string; chil
 }
 
 function Card({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-2xl border border-gray-200/70 dark:border-gray-700/70 bg-white dark:bg-gray-900 shadow-sm p-4">{children}</div>;
+  return (
+    <div className="rounded-2xl border border-gray-200/70 dark:border-gray-700/70 bg-white dark:bg-gray-900 shadow-sm p-4">
+      {children}
+    </div>
+  );
 }
 
-function IconButton({ label, onClick }: { label: string; onClick: () => void }) {
+function IconButton({
+  label,
+  onClick,
+  type = "button",
+}: {
+  label: string;
+  onClick?: () => void;
+  type?: "button" | "submit" | "reset";
+}) {
   return (
-    <button onClick={onClick} className="px-2 py-1 rounded-xl border border-gray-200/70 dark:border-gray-700/70 text-sm hover:bg-gray-50 dark:hover:bg-gray-800">
+    <button
+      type={type} // ← critical: default is "button", not "submit"
+      onClick={onClick}
+      className="px-2 py-1 rounded-xl border border-gray-200/70 dark:border-gray-700/70 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
+    >
       {label}
     </button>
   );
@@ -185,33 +242,55 @@ function IconButton({ label, onClick }: { label: string; onClick: () => void }) 
 
 function PrimaryButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="w-full text-center rounded-xl px-4 py-3 border border-gray-200/70 dark:border-gray-700/70 hover:bg-gray-50 dark:hover:bg-gray-800">
+    <button
+      onClick={onClick}
+      className="w-full text-center rounded-xl px-4 py-3 border border-gray-200/70 dark:border-gray-700/70 hover:bg-gray-50 dark:hover:bg-gray-800"
+    >
       <span className="text-2xl font-semibold tabular-nums">{label}</span>
     </button>
   );
 }
 
-function Modal({ open, onClose, children, title }: { open: boolean; onClose: () => void; children: React.ReactNode; title: string }) {
+function Modal({
+  open,
+  onClose,
+  children,
+  title,
+}: {
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+  title: string;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/40" onMouseDown={onClose} />
-      {/* Content */}
+    <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div
         className="relative w-full max-w-md mx-4 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200/70 dark:border-gray-700/70 shadow-xl p-4"
-        onMouseDown={(e) => e.stopPropagation()}  // ← keep clicks inside from closing / stealing focus
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-base font-semibold">{title}</h3>
-          <button onClick={onClose} className="text-sm opacity-70 hover:opacity-100">Close</button>
+          <button type="button" onClick={onClose} className="text-sm opacity-70 hover:opacity-100">
+            Close
+          </button>
         </div>
         {children}
       </div>
     </div>
   );
 }
-
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -240,9 +319,9 @@ export default function MinimalHabitCountersApp() {
   useEffect(() => saveItems(items), [items]);
   useEffect(() => saveSectionStreaks(sectionStreaks), [sectionStreaks]);
 
-  // Auto-reset on boundary + SECTION streak update based on ALL items in a section
-  useEffect(() => {
-    function rollover(now: Date) {
+  // ---------- Rollover logic (shared) ----------
+  const rollover = useCallback(
+    (now: Date) => {
       // Detect period boundary per section (compare current key vs stored key)
       const boundaryDaily = items.some((i) => i.period === "daily" && periodKey("daily", now) !== i.periodKey);
       const boundaryWeekly = items.some((i) => i.period === "weekly" && periodKey("weekly", now) !== i.periodKey);
@@ -288,13 +367,28 @@ export default function MinimalHabitCountersApp() {
           return it;
         })
       );
-    }
+    },
+    [items, setItems, setSectionStreaks]
+  );
 
-    // Run immediately (in case a boundary was crossed while app was closed), then hourly
-    rollover(new Date());
-    const t = setInterval(() => rollover(new Date()), 60 * 60 * 1000);
+  // Run rollover immediately and every hour
+  useEffect(() => {
+    const check = () => rollover(new Date());
+    check(); // immediate (handles time while app was closed)
+    const t = setInterval(check, 60 * 60 * 1000);
     return () => clearInterval(t);
-  }, [items]);
+  }, [rollover]);
+
+  // 🔔 (5) Also run rollover when app regains focus or becomes visible
+  useEffect(() => {
+    const check = () => rollover(new Date());
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
+    return () => {
+      document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("focus", check);
+    };
+  }, [rollover]);
 
   // Derived lists
   const byPeriod = useMemo(() => {
@@ -303,13 +397,17 @@ export default function MinimalHabitCountersApp() {
     return map;
   }, [items]);
 
-  // Actions
+  function makeId() {
+    const c = (globalThis as any).crypto;
+    return c?.randomUUID ? c.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
   function addItem(title: string, period: Period) {
     const it: Item = {
-      id: crypto.randomUUID(),
+      id: makeId(),
       title: title.trim() || "Untitled",
       period,
-      count: 0,                    // ← always zero
+      count: 0,
       target: 1,
       periodKey: periodKey(period),
       streak: 0,
@@ -317,7 +415,6 @@ export default function MinimalHabitCountersApp() {
     };
     setItems((prev) => [it, ...prev]);
   }
-
 
   function removeItem(id: string) {
     setItems((prev) => prev.filter((i) => i.id !== id));
@@ -348,7 +445,12 @@ export default function MinimalHabitCountersApp() {
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="text-sm tracking-wide uppercase text-gray-500">Minimal Counters</div>
           <div className="relative">
-            <button onClick={() => setShowAddMenu((s) => !s)} className="rounded-xl border border-gray-200/70 dark:border-gray-700/70 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-800">Add</button>
+            <button
+              onClick={() => setShowAddMenu((s) => !s)}
+              className="rounded-xl border border-gray-200/70 dark:border-gray-700/70 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
+            >
+              Add
+            </button>
             {showAddMenu && (
               <div className="absolute right-0 mt-2 w-44 rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-white dark:bg-gray-900 shadow-lg overflow-hidden">
                 {PERIODS.map((p) => (
@@ -379,15 +481,62 @@ export default function MinimalHabitCountersApp() {
     return (
       <Card>
         <div className="flex items-start justify-between mb-2">
-          <div className="font-medium text-gray-900 dark:text-gray-100 truncate" title={it.title}>{it.title}</div>
+          <div className="font-medium text-gray-900 dark:text-gray-100 truncate" title={it.title}>
+            {it.title}
+          </div>
           <div className="relative">
-            <button onClick={() => setMenuOpen((s) => !s)} className="-m-1 px-2 py-1 rounded-lg text-sm opacity-70 hover:opacity-100 border border-transparent hover:border-gray-200/70 dark:hover:border-gray-700/70" aria-label="Item menu">⋯</button>
+            <button
+              onClick={() => setMenuOpen((s) => !s)}
+              className="-m-1 px-2 py-1 rounded-lg text-sm opacity-70 hover:opacity-100 border border-transparent hover:border-gray-200/70 dark:hover:border-gray-700/70"
+              aria-label="Item menu"
+            >
+              ⋯
+            </button>
             {menuOpen && (
               <div className="absolute right-0 mt-2 w-48 rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-white dark:bg-gray-900 shadow-lg overflow-hidden z-10">
-                <button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800" onClick={() => { setMenuOpen(false); setEditingId(it.id); }}>Edit</button>
-                <button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800" onClick={() => { const val = prompt("Set count to:", String(it.count)); if (val == null) return; const n = Math.max(0, Math.floor(Number(val) || 0)); updateItem(it.id, { count: Math.min(n, Math.max(1, it.target)) }); setMenuOpen(false); }}>Set count…</button>
-                <button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800" onClick={() => { const val = prompt("Set target to:", String(it.target)); if (val == null) return; const t = Math.max(1, Math.floor(Number(val) || 1)); const newCount = Math.min(it.count, t); updateItem(it.id, { target: t, count: newCount }); setMenuOpen(false); }}>Set target…</button>
-                <button className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 text-red-600" onClick={() => { setMenuOpen(false); if (confirm("Delete this item?")) removeItem(it.id); }}>Delete</button>
+                <button
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setEditingId(it.id);
+                  }}
+                >
+                  Edit
+                </button>
+                <button
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
+                  onClick={() => {
+                    const val = prompt("Set count to:", String(it.count));
+                    if (val == null) return;
+                    const n = Math.max(0, Math.floor(Number(val) || 0));
+                    updateItem(it.id, { count: Math.min(n, Math.max(1, it.target)) });
+                    setMenuOpen(false);
+                  }}
+                >
+                  Set count…
+                </button>
+                <button
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
+                  onClick={() => {
+                    const val = prompt("Set target to:", String(it.target));
+                    if (val == null) return;
+                    const t = Math.max(1, Math.floor(Number(val) || 1));
+                    const newCount = Math.min(it.count, t);
+                    updateItem(it.id, { target: t, count: newCount });
+                    setMenuOpen(false);
+                  }}
+                >
+                  Set target…
+                </button>
+                <button
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 text-red-600"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    if (confirm("Delete this item?")) removeItem(it.id);
+                  }}
+                >
+                  Delete
+                </button>
               </div>
             )}
           </div>
@@ -400,7 +549,9 @@ export default function MinimalHabitCountersApp() {
 
         <div className="mt-2 flex items-center justify-between text-xs text-gray-600 dark:text-gray-300">
           <span className="capitalize">{it.period}</span>
-          <span className="tabular-nums">{it.count}/{Math.max(1, it.target)}</span>
+          <span className="tabular-nums">
+            {it.count}/{Math.max(1, it.target)}
+          </span>
         </div>
 
         <div className="mt-2 grid grid-cols-2 gap-2">
@@ -421,78 +572,107 @@ export default function MinimalHabitCountersApp() {
   }
 
   function NewItemModal() {
+    const titleRef = useRef<HTMLInputElement>(null);
+
+    // Local state, just like EditItemModal
+    const [tmp, setTmp] = useState<Draft>({});
+
+    // Seed local state when the modal opens, then focus title ONCE
+    useEffect(() => {
+      if (newOpen) {
+        setTmp({
+          title: draft.title ?? "",
+          period: (draft.period as Period) ?? "daily",
+          target: draft.target ?? 1,
+        });
+        // focus after paint
+        const id = setTimeout(() => titleRef.current?.focus(), 0);
+        return () => clearTimeout(id);
+      }
+    }, [newOpen, draft.title, draft.period, draft.target]);
+
+    if (!newOpen) return null;
+
     return (
       <Modal open={newOpen} onClose={() => setNewOpen(false)} title="Add counter">
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            const tgt = Math.max(1, Number(draft.target) || 1);
-            // always start at count = 0
-            addItem(String(draft.title || "Untitled"), (draft.period as Period) || "daily");
-            // set target on newest
+            const period = (tmp.period as Period) || "daily";
+            const tgt = Math.max(1, Number(tmp.target) || 1);
+
+            // create with count=0, then set target on the newly added item
+            addItem(String(tmp.title || "Untitled"), period);
             setItems((prev) => {
               if (prev.length === 0) return prev;
               const [first, ...rest] = prev;
               return [{ ...first, target: tgt, count: Math.min(first.count, tgt) }, ...rest];
             });
+
             setNewOpen(false);
           }}
         >
           <Field label="Title">
             <input
               type="text"
-              autoFocus
+              ref={titleRef}
               className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2"
-              value={draft.title ?? ""}
-              onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+              value={tmp.title ?? ""}
+              onChange={(e) => setTmp((d) => ({ ...d, title: e.target.value }))}
               placeholder="e.g., Push-ups"
             />
           </Field>
+
           <div className="grid grid-cols-2 gap-3">
             <Field label="Period">
               <select
                 className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2"
-                value={draft.period as any}
-                onChange={(e) => setDraft((d) => ({ ...d, period: e.target.value as Period }))}
+                value={tmp.period as any}
+                onChange={(e) => setTmp((d) => ({ ...d, period: e.target.value as Period }))}
               >
                 {PERIODS.map((p) => (
-                  <option key={p} value={p} className="capitalize">{p}</option>
+                  <option key={p} value={p} className="capitalize">
+                    {p}
+                  </option>
                 ))}
               </select>
             </Field>
+
             <Field label="Target (per period)">
               <input
                 type="number"
-                min={1}
+                inputMode="numeric"
+                step={1}
+                // allow empty while typing; clamp on blur/submit
                 className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2"
-                value={draft.target ?? 1}
-                onChange={(e) => setDraft((d) => ({ ...d, target: Math.max(1, Number(e.target.value) || 1) }))}
+                value={tmp.target === undefined ? "" : tmp.target}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setTmp((d) => ({ ...d, target: v === "" ? undefined : Number(v) }));
+                }}
+                onBlur={(e) => {
+                  const v = Number(e.target.value);
+                  setTmp((d) => ({ ...d, target: Math.max(1, isNaN(v) ? 1 : v) }));
+                }}
               />
             </Field>
           </div>
+
           <div className="flex items-center justify-end gap-2 mt-2">
-            <IconButton label="Cancel" onClick={() => setNewOpen(false)} />
-            <IconButton
-              label="Create"
-              onClick={() => {
-                const tgt = Math.max(1, Number(draft.target) || 1);
-                addItem(String(draft.title || "Untitled"), (draft.period as Period) || "daily");
-                setItems((prev) => {
-                  if (prev.length === 0) return prev;
-                  const [first, ...rest] = prev;
-                  return [{ ...first, target: tgt, count: Math.min(first.count, tgt) }, ...rest];
-                });
-                setNewOpen(false);
-              }}
-            />
+            <IconButton label="Cancel" type="button" onClick={() => setNewOpen(false)} />
+            <IconButton label="Create" type="submit" />
           </div>
         </form>
       </Modal>
     );
   }
 
-
   function EditItemModal() {
+    const titleRef = useRef<HTMLInputElement>(null);
+    useEffect(() => {
+      if (editingItem) titleRef.current?.focus(); // focus only once when modal opens
+    }, [editingItem]);
+
     const [tmp, setTmp] = useState<Draft>(() => {
       if (!editingItem) return {};
       return { title: editingItem.title, period: editingItem.period, target: editingItem.target };
@@ -517,10 +697,7 @@ export default function MinimalHabitCountersApp() {
               period: (tmp.period as Period) || editingItem.period,
               count: newCount,
               target: tgt,
-              periodKey:
-                (tmp.period as Period) && tmp.period !== editingItem.period
-                  ? periodKey(tmp.period as Period)
-                  : editingItem.periodKey,
+              periodKey: (tmp.period as Period) && tmp.period !== editingItem.period ? periodKey(tmp.period as Period) : editingItem.periodKey,
             });
             setEditingId(null);
           }}
@@ -528,7 +705,7 @@ export default function MinimalHabitCountersApp() {
           <Field label="Title">
             <input
               type="text"
-              autoFocus
+              ref={titleRef}
               className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2"
               value={tmp.title ?? ""}
               onChange={(e) => setTmp((d) => ({ ...d, title: e.target.value }))}
@@ -542,17 +719,28 @@ export default function MinimalHabitCountersApp() {
                 onChange={(e) => setTmp((d) => ({ ...d, period: e.target.value as Period }))}
               >
                 {PERIODS.map((p) => (
-                  <option key={p} value={p} className="capitalize">{p}</option>
+                  <option key={p} value={p} className="capitalize">
+                    {p}
+                  </option>
                 ))}
               </select>
             </Field>
             <Field label="Target (per period)">
               <input
                 type="number"
+                inputMode="numeric"
+                step={1}
                 min={1}
                 className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2"
-                value={tmp.target ?? (editingItem?.target ?? 1)}
-                onChange={(e) => setTmp((d) => ({ ...d, target: Math.max(1, Number(e.target.value) || 1) }))}
+                value={tmp.target === undefined ? "" : tmp.target}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setTmp((d) => ({ ...d, target: v === "" ? undefined : Number(v) }));
+                }}
+                onBlur={(e) => {
+                  const v = Number(e.target.value);
+                  setTmp((d) => ({ ...d, target: Math.max(1, isNaN(v) ? 1 : v) }));
+                }}
               />
             </Field>
           </div>
@@ -572,29 +760,28 @@ export default function MinimalHabitCountersApp() {
             </button>
             <div className="flex items-center gap-2">
               <IconButton label="Cancel" onClick={() => setEditingId(null)} />
-              <IconButton label="Save" onClick={() => {
-                if (!editingItem) return;
-                const tgt = Math.max(1, Number(tmp.target) || editingItem.target || 1);
-                const newCount = Math.min(editingItem.count, tgt);
-                updateItem(editingItem.id, {
-                  title: String(tmp.title || "Untitled"),
-                  period: (tmp.period as Period) || editingItem.period,
-                  count: newCount,
-                  target: tgt,
-                  periodKey:
-                    (tmp.period as Period) && tmp.period !== editingItem.period
-                      ? periodKey(tmp.period as Period)
-                      : editingItem.periodKey,
-                });
-                setEditingId(null);
-              }} />
+              <IconButton
+                label="Save"
+                onClick={() => {
+                  if (!editingItem) return;
+                  const tgt = Math.max(1, Number(tmp.target) || editingItem.target || 1);
+                  const newCount = Math.min(editingItem.count, tgt);
+                  updateItem(editingItem.id, {
+                    title: String(tmp.title || "Untitled"),
+                    period: (tmp.period as Period) || editingItem.period,
+                    count: newCount,
+                    target: tgt,
+                    periodKey: (tmp.period as Period) && tmp.period !== editingItem.period ? periodKey(tmp.period as Period) : editingItem.periodKey,
+                  });
+                  setEditingId(null);
+                }}
+              />
             </div>
           </div>
         </form>
       </Modal>
     );
   }
-
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
