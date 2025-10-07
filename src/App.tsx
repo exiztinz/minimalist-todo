@@ -476,7 +476,28 @@ export default function MinimalHabitCountersApp() {
 
   function ItemCard({ it }: { it: Item }) {
     const [menuOpen, setMenuOpen] = useState(false);
+    const menuRef = useRef<HTMLDivElement>(null);
     const pct = Math.min(1, (it.count || 0) / Math.max(1, it.target));
+
+    // Close on outside click (or tap) and on Escape
+    useEffect(() => {
+      if (!menuOpen) return;
+      const onPointerDown = (e: PointerEvent) => {
+        if (!menuRef.current) return;
+        if (!menuRef.current.contains(e.target as Node)) {
+          setMenuOpen(false);
+        }
+      };
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key === "Escape") setMenuOpen(false);
+      };
+      document.addEventListener("pointerdown", onPointerDown);
+      document.addEventListener("keydown", onKey);
+      return () => {
+        document.removeEventListener("pointerdown", onPointerDown);
+        document.removeEventListener("keydown", onKey);
+      };
+    }, [menuOpen]);
 
     return (
       <Card>
@@ -484,17 +505,26 @@ export default function MinimalHabitCountersApp() {
           <div className="font-medium text-gray-900 dark:text-gray-100 truncate" title={it.title}>
             {it.title}
           </div>
-          <div className="relative">
+
+          {/* Wrap trigger + menu so outside clicks are detectable */}
+          <div className="relative" ref={menuRef}>
             <button
               onClick={() => setMenuOpen((s) => !s)}
               className="-m-1 px-2 py-1 rounded-lg text-sm opacity-70 hover:opacity-100 border border-transparent hover:border-gray-200/70 dark:hover:border-gray-700/70"
               aria-label="Item menu"
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
             >
               ⋯
             </button>
+
             {menuOpen && (
-              <div className="absolute right-0 mt-2 w-48 rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-white dark:bg-gray-900 shadow-lg overflow-hidden z-10">
+              <div
+                role="menu"
+                className="absolute right-0 mt-2 w-48 rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-white dark:bg-gray-900 shadow-lg overflow-hidden z-10"
+              >
                 <button
+                  role="menuitem"
                   className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
                   onClick={() => {
                     setMenuOpen(false);
@@ -504,6 +534,7 @@ export default function MinimalHabitCountersApp() {
                   Edit
                 </button>
                 <button
+                  role="menuitem"
                   className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
                   onClick={() => {
                     const val = prompt("Set count to:", String(it.count));
@@ -516,6 +547,7 @@ export default function MinimalHabitCountersApp() {
                   Set count…
                 </button>
                 <button
+                  role="menuitem"
                   className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
                   onClick={() => {
                     const val = prompt("Set target to:", String(it.target));
@@ -529,10 +561,13 @@ export default function MinimalHabitCountersApp() {
                   Set target…
                 </button>
                 <button
+                  role="menuitem"
                   className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 text-red-600"
                   onClick={() => {
+                    if (confirm("Delete this item?")) {
+                      removeItem(it.id);
+                    }
                     setMenuOpen(false);
-                    if (confirm("Delete this item?")) removeItem(it.id);
                   }}
                 >
                   Delete
@@ -549,9 +584,7 @@ export default function MinimalHabitCountersApp() {
 
         <div className="mt-2 flex items-center justify-between text-xs text-gray-600 dark:text-gray-300">
           <span className="capitalize">{it.period}</span>
-          <span className="tabular-nums">
-            {it.count}/{Math.max(1, it.target)}
-          </span>
+          <span className="tabular-nums">{it.count}/{Math.max(1, it.target)}</span>
         </div>
 
         <div className="mt-2 grid grid-cols-2 gap-2">
