@@ -195,8 +195,13 @@ function Modal({ open, onClose, children, title }: { open: boolean; onClose: () 
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative w-full max-w-md mx-4 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200/70 dark:border-gray-700/70 shadow-xl p-4">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/40" onMouseDown={onClose} />
+      {/* Content */}
+      <div
+        className="relative w-full max-w-md mx-4 rounded-2xl bg-white dark:bg-gray-900 border border-gray-200/70 dark:border-gray-700/70 shadow-xl p-4"
+        onMouseDown={(e) => e.stopPropagation()}  // ← keep clicks inside from closing / stealing focus
+      >
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-base font-semibold">{title}</h3>
           <button onClick={onClose} className="text-sm opacity-70 hover:opacity-100">Close</button>
@@ -206,6 +211,7 @@ function Modal({ open, onClose, children, title }: { open: boolean; onClose: () 
     </div>
   );
 }
+
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -298,12 +304,12 @@ export default function MinimalHabitCountersApp() {
   }, [items]);
 
   // Actions
-  function addItem(title: string, period: Period, count = 0) {
+  function addItem(title: string, period: Period) {
     const it: Item = {
       id: crypto.randomUUID(),
       title: title.trim() || "Untitled",
       period,
-      count: Math.max(0, Math.floor(Number(count) || 0)),
+      count: 0,                    // ← always zero
       target: 1,
       periodKey: periodKey(period),
       streak: 0,
@@ -311,6 +317,7 @@ export default function MinimalHabitCountersApp() {
     };
     setItems((prev) => [it, ...prev]);
   }
+
 
   function removeItem(id: string) {
     setItems((prev) => prev.filter((i) => i.id !== id));
@@ -420,7 +427,8 @@ export default function MinimalHabitCountersApp() {
           onSubmit={(e) => {
             e.preventDefault();
             const tgt = Math.max(1, Number(draft.target) || 1);
-            addItem(String(draft.title || "Untitled"), (draft.period as Period) || "daily", Number(draft.count) || 0);
+            // always start at count = 0
+            addItem(String(draft.title || "Untitled"), (draft.period as Period) || "daily");
             // set target on newest
             setItems((prev) => {
               if (prev.length === 0) return prev;
@@ -431,49 +439,67 @@ export default function MinimalHabitCountersApp() {
           }}
         >
           <Field label="Title">
-            <input className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2" value={draft.title ?? ""} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} placeholder="e.g., Push-ups" />
+            <input
+              type="text"
+              autoFocus
+              className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2"
+              value={draft.title ?? ""}
+              onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+              placeholder="e.g., Push-ups"
+            />
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Period">
-              <select className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2" value={draft.period as any} onChange={(e) => setDraft((d) => ({ ...d, period: e.target.value as Period }))}>
+              <select
+                className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2"
+                value={draft.period as any}
+                onChange={(e) => setDraft((d) => ({ ...d, period: e.target.value as Period }))}
+              >
                 {PERIODS.map((p) => (
                   <option key={p} value={p} className="capitalize">{p}</option>
                 ))}
               </select>
             </Field>
-            <Field label="Starting count">
-              <input type="number" min={0} className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2" value={draft.count ?? 0} onChange={(e) => setDraft((d) => ({ ...d, count: Number(e.target.value) }))} />
-            </Field>
             <Field label="Target (per period)">
-              <input type="number" min={1} className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2" value={draft.target ?? 1} onChange={(e) => setDraft((d) => ({ ...d, target: Math.max(1, Number(e.target.value) || 1) }))} />
+              <input
+                type="number"
+                min={1}
+                className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2"
+                value={draft.target ?? 1}
+                onChange={(e) => setDraft((d) => ({ ...d, target: Math.max(1, Number(e.target.value) || 1) }))}
+              />
             </Field>
           </div>
           <div className="flex items-center justify-end gap-2 mt-2">
             <IconButton label="Cancel" onClick={() => setNewOpen(false)} />
-            <IconButton label="Create" onClick={() => {
-              const tgt = Math.max(1, Number(draft.target) || 1);
-              addItem(String(draft.title || "Untitled"), (draft.period as Period) || "daily", Number(draft.count) || 0);
-              setItems((prev) => {
-                if (prev.length === 0) return prev;
-                const [first, ...rest] = prev;
-                return [{ ...first, target: tgt, count: Math.min(first.count, tgt) }, ...rest];
-              });
-              setNewOpen(false);
-            }} />
+            <IconButton
+              label="Create"
+              onClick={() => {
+                const tgt = Math.max(1, Number(draft.target) || 1);
+                addItem(String(draft.title || "Untitled"), (draft.period as Period) || "daily");
+                setItems((prev) => {
+                  if (prev.length === 0) return prev;
+                  const [first, ...rest] = prev;
+                  return [{ ...first, target: tgt, count: Math.min(first.count, tgt) }, ...rest];
+                });
+                setNewOpen(false);
+              }}
+            />
           </div>
         </form>
       </Modal>
     );
   }
 
+
   function EditItemModal() {
     const [tmp, setTmp] = useState<Draft>(() => {
       if (!editingItem) return {};
-      return { title: editingItem.title, period: editingItem.period, count: editingItem.count, target: editingItem.target };
+      return { title: editingItem.title, period: editingItem.period, target: editingItem.target };
     });
 
     useEffect(() => {
-      if (editingItem) setTmp({ title: editingItem.title, period: editingItem.period, count: editingItem.count, target: editingItem.target });
+      if (editingItem) setTmp({ title: editingItem.title, period: editingItem.period, target: editingItem.target });
     }, [editingItem]);
 
     if (!editingItem) return null;
@@ -485,33 +511,49 @@ export default function MinimalHabitCountersApp() {
             e.preventDefault();
             if (!editingItem) return;
             const tgt = Math.max(1, Number(tmp.target) || editingItem.target || 1);
-            const newCount = Math.min(Math.max(0, Math.floor(Number(tmp.count) || 0)), tgt);
+            const newCount = Math.min(editingItem.count, tgt); // clamp in case target lowered
             updateItem(editingItem.id, {
               title: String(tmp.title || "Untitled"),
               period: (tmp.period as Period) || editingItem.period,
               count: newCount,
               target: tgt,
-              periodKey: (tmp.period as Period) && tmp.period !== editingItem.period ? periodKey(tmp.period as Period) : editingItem.periodKey,
+              periodKey:
+                (tmp.period as Period) && tmp.period !== editingItem.period
+                  ? periodKey(tmp.period as Period)
+                  : editingItem.periodKey,
             });
             setEditingId(null);
           }}
         >
           <Field label="Title">
-            <input className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2" value={tmp.title ?? ""} onChange={(e) => setTmp((d) => ({ ...d, title: e.target.value }))} />
+            <input
+              type="text"
+              autoFocus
+              className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2"
+              value={tmp.title ?? ""}
+              onChange={(e) => setTmp((d) => ({ ...d, title: e.target.value }))}
+            />
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Period">
-              <select className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2" value={tmp.period as any} onChange={(e) => setTmp((d) => ({ ...d, period: e.target.value as Period }))}>
+              <select
+                className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2"
+                value={tmp.period as any}
+                onChange={(e) => setTmp((d) => ({ ...d, period: e.target.value as Period }))}
+              >
                 {PERIODS.map((p) => (
                   <option key={p} value={p} className="capitalize">{p}</option>
                 ))}
               </select>
             </Field>
-            <Field label="Count">
-              <input type="number" min={0} className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2" value={tmp.count ?? 0} onChange={(e) => setTmp((d) => ({ ...d, count: Number(e.target.value) }))} />
-            </Field>
             <Field label="Target (per period)">
-              <input type="number" min={1} className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2" value={tmp.target ?? (editingItem?.target ?? 1)} onChange={(e) => setTmp((d) => ({ ...d, target: Math.max(1, Number(e.target.value) || 1) }))} />
+              <input
+                type="number"
+                min={1}
+                className="w-full rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-transparent px-3 py-2"
+                value={tmp.target ?? (editingItem?.target ?? 1)}
+                onChange={(e) => setTmp((d) => ({ ...d, target: Math.max(1, Number(e.target.value) || 1) }))}
+              />
             </Field>
           </div>
           <div className="flex items-center justify-between mt-3">
@@ -533,13 +575,16 @@ export default function MinimalHabitCountersApp() {
               <IconButton label="Save" onClick={() => {
                 if (!editingItem) return;
                 const tgt = Math.max(1, Number(tmp.target) || editingItem.target || 1);
-                const newCount = Math.min(Math.max(0, Math.floor(Number(tmp.count) || 0)), tgt);
+                const newCount = Math.min(editingItem.count, tgt);
                 updateItem(editingItem.id, {
                   title: String(tmp.title || "Untitled"),
                   period: (tmp.period as Period) || editingItem.period,
                   count: newCount,
                   target: tgt,
-                  periodKey: (tmp.period as Period) && tmp.period !== editingItem.period ? periodKey(tmp.period as Period) : editingItem.periodKey,
+                  periodKey:
+                    (tmp.period as Period) && tmp.period !== editingItem.period
+                      ? periodKey(tmp.period as Period)
+                      : editingItem.periodKey,
                 });
                 setEditingId(null);
               }} />
@@ -549,6 +594,7 @@ export default function MinimalHabitCountersApp() {
       </Modal>
     );
   }
+
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
