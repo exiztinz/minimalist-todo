@@ -219,6 +219,28 @@ function saveSectionStreaks(ss: SectionStreaks) {
 }
 
 // ---------- UI Primitives ----------
+
+// ---------- Theme helpers ----------
+type Theme = "light" | "dark";
+
+function getInitialTheme(): Theme {
+  try {
+    const saved = localStorage.getItem("mhc:theme");
+    if (saved === "light" || saved === "dark") return saved as Theme;
+  } catch {}
+  // Fallback to system preference
+  if (typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    return "dark";
+  }
+  return "light";
+}
+
+function applyTheme(theme: Theme) {
+  const root = document.documentElement; // Tailwind 'dark' strategy uses class on <html>
+  if (theme === "dark") root.classList.add("dark");
+  else root.classList.remove("dark");
+  try { localStorage.setItem("mhc:theme", theme); } catch {}
+}
 function Section({
   title,
   children,
@@ -357,6 +379,27 @@ export default function MinimalHabitCountersApp() {
   const [items, setItems] = useState<Item[]>(() => loadItems());
   const [sectionStreaks, setSectionStreaks] = useState<SectionStreaks>(() => loadSectionStreaks());
   const [showAddMenu, setShowAddMenu] = useState(false);
+
+  // Theme state
+  const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
+  useEffect(() => { applyTheme(theme); }, [theme]);
+  // Keep in sync with system preference if user hasn't explicitly chosen (only at first mount)
+  useEffect(() => {
+    const mq = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = () => {
+      const saved = (() => { try { return localStorage.getItem("mhc:theme"); } catch { return null; } })();
+      if (saved !== "light" && saved !== "dark") {
+        setTheme(mq.matches ? "dark" : "light");
+      }
+    };
+    if (mq && mq.addEventListener) mq.addEventListener("change", handler);
+    else if (mq && (mq as any).addListener) (mq as any).addListener(handler);
+    return () => {
+      if (mq && mq.removeEventListener) mq.removeEventListener("change", handler);
+      else if (mq && (mq as any).removeListener) (mq as any).removeListener(handler);
+    };
+  }, []);
+  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
 
   // Editing modal state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -514,46 +557,63 @@ export default function MinimalHabitCountersApp() {
       };
     }, [showAddMenu]);
 
+    const nextLabel = theme === "dark" ? "Light" : "Dark";
+    const nextIcon = theme === "dark" ? "☀️" : "🌙";
+
     return (
       <div className="sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/60 dark:supports-[backdrop-filter]:bg-gray-950/60 bg-white/80 dark:bg-gray-950/80 border-b border-gray-200/70 dark:border-gray-800">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="text-sm tracking-wide uppercase text-gray-500">Minimal Counters</div>
 
-          {/* Wrap trigger + menu so outside clicks are detectable */}
-          <div className="relative" ref={addMenuRef}>
+          {/* Right-side controls: Theme toggle + Add */}
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setShowAddMenu((s) => !s)}
-              className="rounded-xl border border-gray-200/70 dark:border-gray-700/70 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
-              aria-haspopup="menu"
-              aria-expanded={showAddMenu}
-              aria-label="Add counter"
+              onClick={toggleTheme}
+              className="rounded-xl border border-gray-200/70 dark:border-gray-700/70 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-2"
+              aria-label={`Switch to ${nextLabel} theme`}
+              title={`Switch to ${nextLabel} theme`}
             >
-              Add
+              <span aria-hidden>{nextIcon}</span>
+              <span>{nextLabel}</span>
             </button>
 
-            {showAddMenu && (
-              <div
-                role="menu"
-                className="absolute right-0 mt-2 w-48 rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-white dark:bg-gray-900 shadow-lg overflow-hidden z-10"
+            {/* Wrap Add trigger + menu so outside clicks are detectable */}
+            <div className="relative" ref={addMenuRef}>
+              <button
+                type="button"
+                onClick={() => setShowAddMenu((s) => !s)}
+                className="rounded-xl border border-gray-200/70 dark:border-gray-700/70 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
+                aria-haspopup="menu"
+                aria-expanded={showAddMenu}
+                aria-label="Add counter"
               >
-                {PERIODS.map((p) => (
-                  <button
-                    key={p}
-                    role="menuitem"
-                    type="button"
-                    onClick={() => {
-                      setShowAddMenu(false);
-                      setDraft({ title: "", period: p, count: 0, target: 1 });
-                      setNewOpen(true);
-                    }}
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 capitalize"
-                  >
-                    Add {p}
-                  </button>
-                ))}
-              </div>
-            )}
+                Add
+              </button>
+
+              {showAddMenu && (
+                <div
+                  role="menu"
+                  className="absolute right-0 mt-2 w-48 rounded-xl border border-gray-200/70 dark:border-gray-700/70 bg-white dark:bg-gray-900 shadow-lg overflow-hidden z-10"
+                >
+                  {PERIODS.map((p) => (
+                    <button
+                      key={p}
+                      role="menuitem"
+                      type="button"
+                      onClick={() => {
+                        setShowAddMenu(false);
+                        setDraft({ title: "", period: p, count: 0, target: 1 });
+                        setNewOpen(true);
+                      }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 capitalize"
+                    >
+                      Add {p}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
